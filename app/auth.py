@@ -1,3 +1,6 @@
+
+
+
 """
 app/auth.py
 
@@ -12,6 +15,7 @@ Flow:
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import jwt, JWTError, ExpiredSignatureError
 from passlib.context import CryptContext
@@ -70,8 +74,16 @@ def generate_otp() -> str:
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 # 1. Request OTP
+from fastapi import BackgroundTasks
+
 @router.post("/request-otp")
-def request_otp(request_data: schemas.RequestOTP):
+def request_otp(request_data: schemas.RequestOTP, background_tasks: BackgroundTasks):
+    # Check if email is already registered
+    from app.database import get_db
+    db = next(get_db())
+    if db.query(models.User).filter(models.User.email == request_data.email).first():
+        raise HTTPException(status_code=400, detail="Email is already registered.")
+
     if request_data.email in temp_otps:
         temp_otps.pop(request_data.email)
 
@@ -79,14 +91,12 @@ def request_otp(request_data: schemas.RequestOTP):
     expiry = datetime.utcnow() + timedelta(minutes=10)
 
     temp_otps[request_data.email] = {
-        "name": request_data.name,
-        "role": request_data.role,
         "otp": otp_code,
         "expiry": expiry,
         "verified": False
     }
 
-    send_otp_email(request_data.email, request_data.name, otp_code)
+    background_tasks.add_task(send_otp_email, request_data.email, "User", otp_code)
     return {"message": "OTP sent successfully to your email."}
 
 # 2. Verify OTP
@@ -119,9 +129,9 @@ def set_password(password_data: schemas.SetPassword, db: Session = Depends(get_d
     hashed_pw = get_password_hash(password_data.password)
 
     new_user = models.User(
-        name=record["name"],
+        name=password_data.name,
         email=password_data.email,
-        role=record["role"],
+        role=password_data.role,
         password_hash=hashed_pw,
         is_verified=1
     )
@@ -137,9 +147,11 @@ def set_password(password_data: schemas.SetPassword, db: Session = Depends(get_d
 # 4. Login
 @router.post("/login", response_model=schemas.Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
+    # Expecting role to be sent as part of form data (OAuth2PasswordRequestForm does not support extra fields by default)
+    role = form_data.scopes[0] if form_data.scopes else None
+    user = db.query(models.User).filter(models.User.email == form_data.username, models.User.role == role).first()
     if not user or not verify_password(form_data.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid credentials or role")
     if not user.is_verified:
         raise HTTPException(status_code=401, detail="Email not verified")
 

@@ -41,8 +41,6 @@ class TokenPayload(BaseModel):
 class RequestOTP(BaseModel):
     """Schema for requesting OTP (signup step 1)"""
     email: EmailStr
-    name: str
-    role: str = Field(..., description="User role: Mentor, Professor, or Student")
 
 class VerifyOTP(BaseModel):
     """Schema for verifying OTP (signup step 2)"""
@@ -57,8 +55,10 @@ class VerifyOTP(BaseModel):
 
 class SetPassword(BaseModel):
     """Schema for setting password after OTP verification (signup step 3)"""
+    name: str
     email: EmailStr
     password: str = Field(..., min_length=8)
+    role: str
 
     @validator("password")
     def validate_password(cls, v):
