@@ -9,7 +9,23 @@ router = APIRouter()
 
 @router.get("/", response_model=List[MentorRead])
 def list_mentors(db: Session = Depends(get_db)):
-    return db.query(Mentor).all()
+    from redis import Redis
+    from app.core.config import settings
+    redis_client = Redis(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        password=settings.REDIS_PASSWORD,
+        decode_responses=True
+    )
+    cache_key = "mentor_list"
+    cached = redis_client.get(cache_key)
+    if cached:
+        import json
+        return [MentorRead.parse_obj(m) for m in json.loads(cached)]
+    mentors = db.query(Mentor).all()
+    import json
+    redis_client.setex(cache_key, 300, json.dumps([m.__dict__ for m in mentors]))  # Cache for 5 min
+    return mentors
 
 @router.get("/{mentor_id}", response_model=MentorRead)
 def get_mentor(mentor_id: int, db: Session = Depends(get_db)):
